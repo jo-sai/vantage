@@ -1,4 +1,8 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:4000/api/v1";
+const API_BASE_URL = import.meta.env.VITE_API_URL || (
+  typeof window !== "undefined" && window.location.port === "5173"
+    ? "http://127.0.0.1:4000/api/v1"
+    : "/api/v1"
+);
 
 
 interface FetchOptions extends RequestInit {

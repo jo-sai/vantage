@@ -332,7 +332,16 @@ export function Finances() {
 
   useEffect(() => {
     if (!isAdmin) return;
-    const ws = new WebSocket("ws://127.0.0.1:4000/ws/ingestion");
+    const wsUrl = (
+      typeof window !== "undefined"
+        ? `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${
+            window.location.port === "5173"
+              ? "127.0.0.1:4000"
+              : window.location.host
+          }/ws/ingestion`
+        : "ws://127.0.0.1:4000/ws/ingestion"
+    );
+    const ws = new WebSocket(wsUrl);
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
