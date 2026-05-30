@@ -252,9 +252,11 @@ export function Timeline() {
     });
   };
 
-  // Fetch overrides on mount or when active team/workspace switches
+  // Fetch overrides on mount or when active team/workspace switches, with automatic polling
   useEffect(() => {
-    const loadData = async () => {
+    let isMounted = true;
+
+    const loadData = async (silent = false) => {
       // 1. Load from localStorage first (for robust offline demo persistence)
       const localOverridesStr = localStorage.getItem(`vantage_gantt_overrides_${workspaceId}`);
       const localOverrides = localOverridesStr ? JSON.parse(localOverridesStr) : [];
@@ -262,43 +264,53 @@ export function Timeline() {
       const localShiftsStr = localStorage.getItem(`vantage_gantt_shifts_${workspaceId}`);
       const localShifts = localShiftsStr ? JSON.parse(localShiftsStr) : [];
 
-      setLoadedOverrides(localOverrides);
-      setLoadedShifts(localShifts);
-      applyTimelineUpdates(localShifts, localOverrides);
+      if (!silent && isMounted) {
+        setLoadedOverrides(localOverrides);
+        setLoadedShifts(localShifts);
+        applyTimelineUpdates(localShifts, localOverrides);
+      }
 
       // 2. Fetch from backend API
       try {
         let latestOverrides = localOverrides;
         try {
           const res = await apiFetch(`/projects/timeline/overrides/${workspaceId}`);
-          if (res && res.success && res.data) {
+          if (isMounted && res && res.success && res.data) {
             latestOverrides = res.data;
             localStorage.setItem(`vantage_gantt_overrides_${workspaceId}`, JSON.stringify(latestOverrides));
           }
         } catch (e) {
-          console.warn("Failed to fetch overrides from backend, using local cache", e);
+          if (!silent) console.warn("Failed to fetch overrides from backend, using local cache", e);
         }
 
         let latestShifts = localShifts;
         try {
           const res = await apiFetch(`/projects/timeline/shifts/${workspaceId}`);
-          if (res && res.success && res.data) {
+          if (isMounted && res && res.success && res.data) {
             latestShifts = res.data;
             localStorage.setItem(`vantage_gantt_shifts_${workspaceId}`, JSON.stringify(latestShifts));
           }
         } catch (e) {
-          console.warn("Failed to fetch shifts from backend, using local cache", e);
+          if (!silent) console.warn("Failed to fetch shifts from backend, using local cache", e);
         }
 
-        setLoadedOverrides(latestOverrides);
-        setLoadedShifts(latestShifts);
-        applyTimelineUpdates(latestShifts, latestOverrides);
+        if (isMounted) {
+          setLoadedOverrides(latestOverrides);
+          setLoadedShifts(latestShifts);
+          applyTimelineUpdates(latestShifts, latestOverrides);
+        }
       } catch (e) {
-        console.error("Error during satellite sync:", e);
+        if (!silent) console.error("Error during satellite sync:", e);
       }
     };
 
-    loadData();
+    loadData(false);
+    const interval = setInterval(() => loadData(true), 4000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, [selectedTeam, workspaceId]);
 
   // Frontend manual override handler function
