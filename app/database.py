@@ -91,6 +91,13 @@ def init_db():
                 if "workHours" not in adj_cols:
                     conn.execute(text("ALTER TABLE PayrollAdjustment ADD COLUMN workHours REAL DEFAULT 160.0"))
                     print("[MIGRATION] Added workHours column to PayrollAdjustment table.")
+
+                # Check Workspace table columns
+                cursor = conn.execute(text("PRAGMA table_info(Workspace)"))
+                ws_cols = [row[1] for row in cursor.fetchall()]
+                if "ganttCustomData" not in ws_cols:
+                    conn.execute(text("ALTER TABLE Workspace ADD COLUMN ganttCustomData TEXT"))
+                    print("[MIGRATION] Added ganttCustomData column to Workspace table.")
         except Exception as mig_err:
             print(f"[MIGRATION] Resilient SQLite column check skipped or failed: {mig_err}")
     except Exception as create_err:

@@ -229,3 +229,48 @@ async def delete_timeline_shift(
     }
 
 
+class SaveCustomGanttRequest(BaseModel):
+    ganttCustomData: str = Field(..., description="JSON string containing custom projects and org sync map")
+
+
+@router.get("/custom/{workspaceId}")
+async def get_custom_gantt_projects(
+    workspaceId: str = Path(..., description="Target workspace ID"),
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(require_tenant)
+):
+    """
+    Retrieves the entire custom Gantt projects JSON dataset for this workspace.
+    """
+    from app.models import Workspace
+    stmt = select(Workspace).where(Workspace.id == tenant.workspace_id)
+    ws = db.exec(stmt).first()
+    return {
+        "success": True,
+        "data": ws.ganttCustomData if ws else None
+    }
+
+
+@router.post("/custom/{workspaceId}")
+async def save_custom_gantt_projects(
+    payload: SaveCustomGanttRequest,
+    workspaceId: str = Path(..., description="Target workspace ID"),
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(require_tenant)
+):
+    """
+    Persists the custom Gantt projects JSON dataset for this workspace.
+    """
+    from app.models import Workspace
+    stmt = select(Workspace).where(Workspace.id == tenant.workspace_id)
+    ws = db.exec(stmt).first()
+    if ws:
+        ws.ganttCustomData = payload.ganttCustomData
+        db.add(ws)
+        db.commit()
+    return {
+        "success": True,
+        "message": "Custom Gantt projects saved successfully"
+    }
+
+

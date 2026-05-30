@@ -252,7 +252,7 @@ export function Timeline() {
     });
   };
 
-  // Fetch overrides on mount or when active team/workspace switches, with automatic polling
+  // Fetch overrides and custom projects on mount or when active team/workspace switches, with automatic polling
   useEffect(() => {
     let isMounted = true;
 
@@ -264,9 +264,21 @@ export function Timeline() {
       const localShiftsStr = localStorage.getItem(`vantage_gantt_shifts_${workspaceId}`);
       const localShifts = localShiftsStr ? JSON.parse(localShiftsStr) : [];
 
+      const localCustomOrgStr = localStorage.getItem(`vantage_gantt_custom_org_projects_${workspaceId}`);
+      const localCustomOrg = localCustomOrgStr ? JSON.parse(localCustomOrgStr) : [];
+
+      const localCustomTeamStr = localStorage.getItem(`vantage_gantt_custom_projects_${workspaceId}`);
+      const localCustomTeam = localCustomTeamStr ? JSON.parse(localCustomTeamStr) : {};
+
+      const localSyncMapStr = localStorage.getItem(`vantage_gantt_sync_to_org_map_${workspaceId}`);
+      const localSyncMap = localSyncMapStr ? JSON.parse(localSyncMapStr) : {};
+
       if (!silent && isMounted) {
         setLoadedOverrides(localOverrides);
         setLoadedShifts(localShifts);
+        setCustomOrgProjects(localCustomOrg);
+        setCustomProjects(localCustomTeam);
+        setSyncToOrgMap(localSyncMap);
         applyTimelineUpdates(localShifts, localOverrides);
       }
 
@@ -292,6 +304,48 @@ export function Timeline() {
           }
         } catch (e) {
           if (!silent) console.warn("Failed to fetch shifts from backend, using local cache", e);
+        }
+
+        const isDemo = DEMO_WORKSPACES.includes(workspaceId);
+        if (!isDemo) {
+          try {
+            const res = await apiFetch(`/projects/timeline/custom/${workspaceId}`);
+            if (isMounted && res && res.success && typeof res.data === "string") {
+              try {
+                const customData = JSON.parse(res.data);
+                if (customData) {
+                  const parsedOrg = customData.customOrgProjects || [];
+                  const parsedTeam = customData.customProjects || {};
+                  const parsedSync = customData.syncToOrgMap || {};
+
+                  const dbOrgStr = JSON.stringify(parsedOrg);
+                  const dbTeamStr = JSON.stringify(parsedTeam);
+                  const dbSyncStr = JSON.stringify(parsedSync);
+
+                  const localOrgStr = JSON.stringify(localCustomOrg);
+                  const localTeamStr = JSON.stringify(localCustomTeam);
+                  const localSyncStr = JSON.stringify(localSyncMap);
+
+                  if (dbOrgStr !== localOrgStr) {
+                    localStorage.setItem(`vantage_gantt_custom_org_projects_${workspaceId}`, dbOrgStr);
+                    setCustomOrgProjects(parsedOrg);
+                  }
+                  if (dbTeamStr !== localTeamStr) {
+                    localStorage.setItem(`vantage_gantt_custom_projects_${workspaceId}`, dbTeamStr);
+                    setCustomProjects(parsedTeam);
+                  }
+                  if (dbSyncStr !== localSyncStr) {
+                    localStorage.setItem(`vantage_gantt_sync_to_org_map_${workspaceId}`, dbSyncStr);
+                    setSyncToOrgMap(parsedSync);
+                  }
+                }
+              } catch (parseError) {
+                console.error("Failed to parse custom gantt data JSON from backend:", parseError);
+              }
+            }
+          } catch (e) {
+            if (!silent) console.warn("Failed to fetch custom projects from backend, using local cache", e);
+          }
         }
 
         if (isMounted) {
@@ -455,6 +509,36 @@ export function Timeline() {
     ...liveWeatherImpacts.filter(l => !(currentTeamData.weatherImpacts || []).some(w => w.day === l.day))
   ];
 
+  const syncCustomProjectsToBackend = async (
+    orgProj: CustomProject[],
+    teamProj: Record<string, CustomProject[]>,
+    syncMap: Record<string, boolean>
+  ) => {
+    const isDemo = DEMO_WORKSPACES.includes(workspaceId);
+    if (isDemo) return;
+    try {
+      await apiFetch(`/projects/timeline/custom/${workspaceId}`, {
+        method: "POST",
+        body: {
+          ganttCustomData: JSON.stringify({
+            customOrgProjects: orgProj,
+            customProjects: teamProj,
+            syncToOrgMap: syncMap
+          })
+        }
+      });
+    } catch (e) {
+      console.error("Failed to sync custom projects to database:", e);
+    }
+  };
+
+  const handleToggleSyncToOrgMaster = (val: boolean) => {
+    const nextSyncMap = { ...syncToOrgMap, [selectedTeam]: val };
+    setSyncToOrgMap(nextSyncMap);
+    localStorage.setItem(`vantage_gantt_sync_to_org_map_${workspaceId}`, JSON.stringify(nextSyncMap));
+    syncCustomProjectsToBackend(customOrgProjects, customProjects, nextSyncMap);
+  };
+
   const handleCreateProject = (data: NewProjectData) => {
     if (!data.generateGantt) return;
     
@@ -505,20 +589,18 @@ export function Timeline() {
     };
 
     if (creationLevel === "org") {
-      setCustomOrgProjects((prev) => {
-        const next = [...prev, newProject];
-        localStorage.setItem(`vantage_gantt_custom_org_projects_${workspaceId}`, JSON.stringify(next));
-        return next;
-      });
+      const nextOrg = [...customOrgProjects, newProject];
+      setCustomOrgProjects(nextOrg);
+      localStorage.setItem(`vantage_gantt_custom_org_projects_${workspaceId}`, JSON.stringify(nextOrg));
+      syncCustomProjectsToBackend(nextOrg, customProjects, syncToOrgMap);
     } else {
-      setCustomProjects((prev) => {
-        const next = {
-          ...prev,
-          [selectedTeam]: [...(prev[selectedTeam] || []), newProject],
-        };
-        localStorage.setItem(`vantage_gantt_custom_projects_${workspaceId}`, JSON.stringify(next));
-        return next;
-      });
+      const nextTeam = {
+        ...customProjects,
+        [selectedTeam]: [...(customProjects[selectedTeam] || []), newProject],
+      };
+      setCustomProjects(nextTeam);
+      localStorage.setItem(`vantage_gantt_custom_projects_${workspaceId}`, JSON.stringify(nextTeam));
+      syncCustomProjectsToBackend(customOrgProjects, nextTeam, syncToOrgMap);
     }
 
     setWeatherSiteName(data.location);
@@ -526,132 +608,120 @@ export function Timeline() {
 
   const handleAddSubTask = (projectId: string) => {
     if (customOrgProjects.some(p => p.id === projectId)) {
-      setCustomOrgProjects((prev) => {
-        const next = prev.map((p) => {
-          if (p.id !== projectId) return p;
-          const idx = p.subTasks.length + 1;
-          const subDuration = Math.min(3, Math.max(1, Math.floor(p.duration / 3)));
-          const offset = Math.min(p.duration - subDuration, (p.subTasks.length * subDuration) % p.duration);
-          return {
-            ...p,
-            subTasks: [
-              ...p.subTasks,
-              {
-                id: `st-${Date.now()}-${idx}`,
-                name: `Sub-task ${idx}`,
-                start: p.start + offset,
-                duration: subDuration,
-              },
-            ],
-          };
-        });
-        localStorage.setItem(`vantage_gantt_custom_org_projects_${workspaceId}`, JSON.stringify(next));
-        return next;
+      const nextOrg = customOrgProjects.map((p) => {
+        if (p.id !== projectId) return p;
+        const idx = p.subTasks.length + 1;
+        const subDuration = Math.min(3, Math.max(1, Math.floor(p.duration / 3)));
+        const offset = Math.min(p.duration - subDuration, (p.subTasks.length * subDuration) % p.duration);
+        return {
+          ...p,
+          subTasks: [
+            ...p.subTasks,
+            {
+              id: `st-${Date.now()}-${idx}`,
+              name: `Sub-task ${idx}`,
+              start: p.start + offset,
+              duration: subDuration,
+            },
+          ],
+        };
       });
+      setCustomOrgProjects(nextOrg);
+      localStorage.setItem(`vantage_gantt_custom_org_projects_${workspaceId}`, JSON.stringify(nextOrg));
+      syncCustomProjectsToBackend(nextOrg, customProjects, syncToOrgMap);
     } else {
-      setCustomProjects((prev) => {
-        const next = { ...prev };
-        Object.keys(next).forEach((team) => {
-          if ((next[team] || []).some(p => p.id === projectId)) {
-            next[team] = next[team].map((p) => {
-              if (p.id !== projectId) return p;
-              const idx = p.subTasks.length + 1;
-              const subDuration = Math.min(3, Math.max(1, Math.floor(p.duration / 3)));
-              const offset = Math.min(p.duration - subDuration, (p.subTasks.length * subDuration) % p.duration);
-              return {
-                ...p,
-                subTasks: [
-                  ...p.subTasks,
-                  {
-                    id: `st-${Date.now()}-${idx}`,
-                    name: `Sub-task ${idx}`,
-                    start: p.start + offset,
-                    duration: subDuration,
-                  },
-                ],
-              };
-            });
-          }
-        });
-        localStorage.setItem(`vantage_gantt_custom_projects_${workspaceId}`, JSON.stringify(next));
-        return next;
+      const nextTeam = { ...customProjects };
+      Object.keys(nextTeam).forEach((team) => {
+        if ((nextTeam[team] || []).some(p => p.id === projectId)) {
+          nextTeam[team] = nextTeam[team].map((p) => {
+            if (p.id !== projectId) return p;
+            const idx = p.subTasks.length + 1;
+            const subDuration = Math.min(3, Math.max(1, Math.floor(p.duration / 3)));
+            const offset = Math.min(p.duration - subDuration, (p.subTasks.length * subDuration) % p.duration);
+            return {
+              ...p,
+              subTasks: [
+                ...p.subTasks,
+                {
+                  id: `st-${Date.now()}-${idx}`,
+                  name: `Sub-task ${idx}`,
+                  start: p.start + offset,
+                  duration: subDuration,
+                },
+              ],
+            };
+          });
+        }
       });
+      setCustomProjects(nextTeam);
+      localStorage.setItem(`vantage_gantt_custom_projects_${workspaceId}`, JSON.stringify(nextTeam));
+      syncCustomProjectsToBackend(customOrgProjects, nextTeam, syncToOrgMap);
     }
   };
 
   const handleUpdateSubTask = (projectId: string, subTaskId: string, newStart: number) => {
     if (customOrgProjects.some(p => p.id === projectId)) {
-      setCustomOrgProjects((prev) => {
-        const next = prev.map((p) =>
-          p.id === projectId
-            ? { ...p, subTasks: p.subTasks.map((s) => (s.id === subTaskId ? { ...s, start: newStart } : s)) }
-            : p
-        );
-        localStorage.setItem(`vantage_gantt_custom_org_projects_${workspaceId}`, JSON.stringify(next));
-        return next;
-      });
+      const nextOrg = customOrgProjects.map((p) =>
+        p.id === projectId
+          ? { ...p, subTasks: p.subTasks.map((s) => (s.id === subTaskId ? { ...s, start: newStart } : s)) }
+          : p
+      );
+      setCustomOrgProjects(nextOrg);
+      localStorage.setItem(`vantage_gantt_custom_org_projects_${workspaceId}`, JSON.stringify(nextOrg));
+      syncCustomProjectsToBackend(nextOrg, customProjects, syncToOrgMap);
     } else {
-      setCustomProjects((prev) => {
-        const next = { ...prev };
-        Object.keys(next).forEach((team) => {
-          if ((next[team] || []).some(p => p.id === projectId)) {
-            next[team] = next[team].map((p) =>
-              p.id === projectId
-                ? { ...p, subTasks: p.subTasks.map((s) => (s.id === subTaskId ? { ...s, start: newStart } : s)) }
-                : p
-            );
-          }
-        });
-        localStorage.setItem(`vantage_gantt_custom_projects_${workspaceId}`, JSON.stringify(next));
-        return next;
+      const nextTeam = { ...customProjects };
+      Object.keys(nextTeam).forEach((team) => {
+        if ((nextTeam[team] || []).some(p => p.id === projectId)) {
+          nextTeam[team] = nextTeam[team].map((p) =>
+            p.id === projectId
+              ? { ...p, subTasks: p.subTasks.map((s) => (s.id === subTaskId ? { ...s, start: newStart } : s)) }
+              : p
+          );
+        }
       });
+      setCustomProjects(nextTeam);
+      localStorage.setItem(`vantage_gantt_custom_projects_${workspaceId}`, JSON.stringify(nextTeam));
+      syncCustomProjectsToBackend(customOrgProjects, nextTeam, syncToOrgMap);
     }
   };
 
   const handleDeleteProject = (projectId: string) => {
-    // Attempt to remove from customOrgProjects
-    setCustomOrgProjects((prev) => {
-      const next = prev.filter((p) => p.id !== projectId);
-      localStorage.setItem(`vantage_gantt_custom_org_projects_${workspaceId}`, JSON.stringify(next));
-      return next;
+    const nextOrg = customOrgProjects.filter((p) => p.id !== projectId);
+    const nextTeam = { ...customProjects };
+    Object.keys(nextTeam).forEach((team) => {
+      nextTeam[team] = (nextTeam[team] || []).filter((p) => p.id !== projectId);
     });
+
+    setCustomOrgProjects(nextOrg);
+    setCustomProjects(nextTeam);
     
-    // Attempt to remove from customProjects across all teams
-    setCustomProjects((prev) => {
-      const next = { ...prev };
-      Object.keys(next).forEach((team) => {
-        next[team] = (next[team] || []).filter((p) => p.id !== projectId);
-      });
-      localStorage.setItem(`vantage_gantt_custom_projects_${workspaceId}`, JSON.stringify(next));
-      return next;
-    });
+    localStorage.setItem(`vantage_gantt_custom_org_projects_${workspaceId}`, JSON.stringify(nextOrg));
+    localStorage.setItem(`vantage_gantt_custom_projects_${workspaceId}`, JSON.stringify(nextTeam));
+    syncCustomProjectsToBackend(nextOrg, nextTeam, syncToOrgMap);
   };
 
   const handleDeleteSubTask = (projectId: string, subTaskId: string) => {
-    // Attempt to delete from customOrgProjects
-    setCustomOrgProjects((prev) => {
-      const next = prev.map((p) =>
+    const nextOrg = customOrgProjects.map((p) =>
+      p.id === projectId
+        ? { ...p, subTasks: p.subTasks.filter((s) => s.id !== subTaskId) }
+        : p
+    );
+    const nextTeam = { ...customProjects };
+    Object.keys(nextTeam).forEach((team) => {
+      nextTeam[team] = (nextTeam[team] || []).map((p) =>
         p.id === projectId
           ? { ...p, subTasks: p.subTasks.filter((s) => s.id !== subTaskId) }
           : p
       );
-      localStorage.setItem(`vantage_gantt_custom_org_projects_${workspaceId}`, JSON.stringify(next));
-      return next;
     });
-    
-    // Attempt to delete from customProjects
-    setCustomProjects((prev) => {
-      const next = { ...prev };
-      Object.keys(next).forEach((team) => {
-        next[team] = (next[team] || []).map((p) =>
-          p.id === projectId
-            ? { ...p, subTasks: p.subTasks.filter((s) => s.id !== subTaskId) }
-            : p
-        );
-      });
-      localStorage.setItem(`vantage_gantt_custom_projects_${workspaceId}`, JSON.stringify(next));
-      return next;
-    });
+
+    setCustomOrgProjects(nextOrg);
+    setCustomProjects(nextTeam);
+
+    localStorage.setItem(`vantage_gantt_custom_org_projects_${workspaceId}`, JSON.stringify(nextOrg));
+    localStorage.setItem(`vantage_gantt_custom_projects_${workspaceId}`, JSON.stringify(nextTeam));
+    syncCustomProjectsToBackend(nextOrg, nextTeam, syncToOrgMap);
   };
 
   return (
@@ -799,7 +869,7 @@ export function Timeline() {
               onDeleteProject={handleDeleteProject}
               onDeleteSubTask={handleDeleteSubTask}
               syncToOrgMaster={!!syncToOrgMap[selectedTeam]}
-              onToggleSyncToOrgMaster={(val) => setSyncToOrgMap(prev => ({ ...prev, [selectedTeam]: val }))}
+              onToggleSyncToOrgMaster={handleToggleSyncToOrgMaster}
             />
           )}
         </div>
