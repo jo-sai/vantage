@@ -70,6 +70,7 @@ class Workspace(SQLModel, table=True):
     logoUrl: Optional[str] = None
     stripeCustomerId: Optional[str] = Field(default=None, unique=True, nullable=True)
     ganttCustomData: Optional[str] = Field(default=None, nullable=True)
+    chatDepartmentsData: Optional[str] = Field(default=None, nullable=True)
     createdAt: datetime = Field(default_factory=datetime.utcnow)
     updatedAt: datetime = Field(default_factory=datetime.utcnow)
 

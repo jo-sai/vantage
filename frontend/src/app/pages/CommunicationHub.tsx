@@ -107,6 +107,21 @@ export function CommunicationHub() {
     const saved = localStorage.getItem(`vantage_departments_${orgId}`);
     return saved ? JSON.parse(saved) : [];
   });
+  const syncDepartmentsToBackend = async (depts: Department[]) => {
+    const isDemo = DEMO_WORKSPACES.includes(workspaceId);
+    if (isDemo) return;
+    try {
+      await apiFetch(`/workspaces/chat-departments/${workspaceId}`, {
+        method: "POST",
+        body: {
+          chatDepartmentsData: JSON.stringify(depts)
+        }
+      });
+    } catch (e) {
+      console.error("Failed to sync chat workspaces/departments to database:", e);
+    }
+  };
+
   const [dynamicContent, setDynamicContent] = useState<
     Record<string, ReturnType<typeof makeEmptyContent>>
   >({});
@@ -136,6 +151,62 @@ export function CommunicationHub() {
       setActiveWorkspace("");
     }
   }, [role, assignedDepartment, visibleDepartments, activeWorkspace]);
+
+  // Load departments when workspaceId changes
+  useEffect(() => {
+    const isDemo = ["operations", "acme", "vantage-demo", "buildright"].includes(workspaceId);
+    if (isDemo) {
+      setAllDepartments(seedDepartments);
+      return;
+    }
+    const saved = localStorage.getItem(`vantage_departments_${workspaceId}`);
+    setAllDepartments(saved ? JSON.parse(saved) : []);
+  }, [workspaceId]);
+
+  // Fetch and poll dynamic departments from the database
+  useEffect(() => {
+    let isMounted = true;
+    const isDemo = DEMO_WORKSPACES.includes(workspaceId);
+    if (isDemo) return;
+
+    const loadDepartments = async (silent = false) => {
+      const localDeptsStr = localStorage.getItem(`vantage_departments_${workspaceId}`);
+      const localDepts = localDeptsStr ? JSON.parse(localDeptsStr) : [];
+
+      if (!silent && isMounted) {
+        setAllDepartments(localDepts);
+      }
+
+      try {
+        const res = await apiFetch(`/workspaces/chat-departments/${workspaceId}`);
+        if (isMounted && res && res.success && typeof res.data === "string") {
+          try {
+            const parsedDepts = JSON.parse(res.data);
+            if (parsedDepts) {
+              const dbDeptsStr = JSON.stringify(parsedDepts);
+              const localDeptsStrCurrent = JSON.stringify(localDepts);
+              if (dbDeptsStr !== localDeptsStrCurrent) {
+                localStorage.setItem(`vantage_departments_${workspaceId}`, dbDeptsStr);
+                setAllDepartments(parsedDepts);
+              }
+            }
+          } catch (parseError) {
+            console.error("Failed to parse chat departments JSON from backend:", parseError);
+          }
+        }
+      } catch (err) {
+        if (!silent) console.warn("Failed to fetch chat departments from backend, using local cache", err);
+      }
+    };
+
+    loadDepartments(false);
+    const interval = setInterval(() => loadDepartments(true), 4000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [workspaceId]);
 
   // ── Announcements state ──────────────────────────────────────────────
   const [localAnnouncements, setLocalAnnouncements] = useState<Record<string, AnnouncementItem[]>>(() => {
@@ -393,10 +464,10 @@ export function CommunicationHub() {
 
     setAllDepartments(updated);
 
-    const isDemo = ["operations", "acme", "vantage-demo", "buildright"].includes(localStorage.getItem("vantage_active_workspace_id") || "operations");
-    const orgId = localStorage.getItem("vantage_active_workspace_id");
-    if (!isDemo && orgId) {
-      localStorage.setItem(`vantage_departments_${orgId}`, JSON.stringify(updated));
+    const isDemo = ["operations", "acme", "vantage-demo", "buildright"].includes(workspaceId);
+    if (!isDemo && workspaceId) {
+      localStorage.setItem(`vantage_departments_${workspaceId}`, JSON.stringify(updated));
+      syncDepartmentsToBackend(updated);
     }
 
     toast.success("Members Added", {
@@ -583,18 +654,17 @@ export function CommunicationHub() {
         ...prev,
         [id]: [makeEmptyContent(data.name).announcements[0] as AnnouncementItem],
       };
-      const isDemo = ["operations", "acme", "vantage-demo", "buildright"].includes(localStorage.getItem("vantage_active_workspace_id") || "operations");
-      const orgId = localStorage.getItem("vantage_active_workspace_id");
-      if (!isDemo && orgId) {
-        localStorage.setItem(`vantage_announcements_${orgId}`, JSON.stringify(updatedAnnouncements));
+      const isDemo = ["operations", "acme", "vantage-demo", "buildright"].includes(workspaceId);
+      if (!isDemo && workspaceId) {
+        localStorage.setItem(`vantage_announcements_${workspaceId}`, JSON.stringify(updatedAnnouncements));
       }
       return updatedAnnouncements;
     });
 
-    const isDemo = ["operations", "acme", "vantage-demo", "buildright"].includes(localStorage.getItem("vantage_active_workspace_id") || "operations");
-    const orgId = localStorage.getItem("vantage_active_workspace_id");
-    if (!isDemo && orgId) {
-      localStorage.setItem(`vantage_departments_${orgId}`, JSON.stringify(updated));
+    const isDemo = ["operations", "acme", "vantage-demo", "buildright"].includes(workspaceId);
+    if (!isDemo && workspaceId) {
+      localStorage.setItem(`vantage_departments_${workspaceId}`, JSON.stringify(updated));
+      syncDepartmentsToBackend(updated);
     }
 
     setShowCreateModal(false);

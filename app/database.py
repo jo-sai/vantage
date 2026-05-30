@@ -98,6 +98,9 @@ def init_db():
                 if "ganttCustomData" not in ws_cols:
                     conn.execute(text("ALTER TABLE Workspace ADD COLUMN ganttCustomData TEXT"))
                     print("[MIGRATION] Added ganttCustomData column to Workspace table.")
+                if "chatDepartmentsData" not in ws_cols:
+                    conn.execute(text("ALTER TABLE Workspace ADD COLUMN chatDepartmentsData TEXT"))
+                    print("[MIGRATION] Added chatDepartmentsData column to Workspace table.")
         except Exception as mig_err:
             print(f"[MIGRATION] Resilient SQLite column check skipped or failed: {mig_err}")
     except Exception as create_err:

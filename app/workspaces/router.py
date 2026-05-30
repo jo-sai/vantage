@@ -574,3 +574,93 @@ async def update_member_role(
 
     else:
         raise ForbiddenException("Only Org Owners and Org Admins can manage member roles.")
+
+
+class SaveChatDepartmentsRequest(BaseModel):
+    chatDepartmentsData: str = Field(..., description="JSON string containing chat departments/channels")
+
+
+@router.get("/chat-departments/{workspaceId}")
+async def get_chat_departments(
+    workspaceId: str = Path(..., description="Target workspace ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Retrieves the entire custom chat departments/channels JSON dataset for this workspace.
+    Ensures strict tenant isolation.
+    """
+    # 1. Assert the calling user is a member of this workspace
+    caller_stmt = select(WorkspaceMember).where(
+        WorkspaceMember.workspaceId == workspaceId,
+        WorkspaceMember.userId == current_user.id
+    )
+    caller_membership = db.exec(caller_stmt).first()
+    if not caller_membership:
+        if current_user.role in (Role.OWNER, Role.ADMIN):
+            caller_membership = WorkspaceMember(
+                workspaceId=workspaceId,
+                userId=current_user.id,
+                role=current_user.role
+            )
+            db.add(caller_membership)
+            db.commit()
+            db.refresh(caller_membership)
+        else:
+            raise ForbiddenException("You are not a member of this organization")
+
+    workspace = db.get(Workspace, workspaceId)
+    if not workspace:
+        raise NotFoundException("Workspace not found")
+
+    return {
+        "success": True,
+        "data": workspace.chatDepartmentsData
+    }
+
+
+@router.post("/chat-departments/{workspaceId}")
+async def save_chat_departments(
+    payload: SaveChatDepartmentsRequest,
+    workspaceId: str = Path(..., description="Target workspace ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Persists the custom chat departments/channels JSON dataset for this workspace.
+    Restricted to Owners, Admins, and Team Leaders.
+    """
+    # 1. Assert caller is an admin/owner/TL in this workspace
+    caller_stmt = select(WorkspaceMember).where(
+        WorkspaceMember.workspaceId == workspaceId,
+        WorkspaceMember.userId == current_user.id
+    )
+    caller_membership = db.exec(caller_stmt).first()
+    if not caller_membership:
+        if current_user.role in (Role.OWNER, Role.ADMIN):
+            caller_membership = WorkspaceMember(
+                workspaceId=workspaceId,
+                userId=current_user.id,
+                role=current_user.role
+            )
+            db.add(caller_membership)
+            db.commit()
+            db.refresh(caller_membership)
+        else:
+            raise ForbiddenException("You are not a member of this organization")
+
+    if caller_membership.role not in (Role.OWNER, Role.ADMIN, Role.TEAM_LEADER):
+        raise ForbiddenException("Only owners, admins, and team leaders can manage chat channels.")
+
+    workspace = db.get(Workspace, workspaceId)
+    if not workspace:
+        raise NotFoundException("Workspace not found")
+
+    workspace.chatDepartmentsData = payload.chatDepartmentsData
+    db.add(workspace)
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "Chat departments saved successfully"
+    }
