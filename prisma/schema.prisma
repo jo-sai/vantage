@@ -1,0 +1,185 @@
+// This is the Prisma schema file for Design Vantage SaaS Backend.
+// Learn more in the docs: https://pris.ly/d/prisma-schema
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  CREATOR
+  CLIENT
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  TRIALING
+}
+
+enum AssetType {
+  IMAGE
+  VECTOR
+  FONT
+  VIDEO
+  DOCUMENT
+}
+
+model User {
+  id            String            @id @default(uuid())
+  email         String            @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  avatarUrl     String?
+  role          Role              @default(CREATOR)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  // Relations
+  memberships   WorkspaceMember[]
+  comments      Comment[]
+  createdAssets Asset[]
+}
+
+model Workspace {
+  id               String            @id @default(uuid())
+  name             String
+  slug             String            @unique
+  logoUrl          String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  // Tenant Isolation Relations
+  members          WorkspaceMember[]
+  projects         Project[]
+  subscription     Subscription?
+
+  // Stripe Billing fields mapping
+  stripeCustomerId String?           @unique
+}
+
+model WorkspaceMember {
+  id          String    @id @default(uuid())
+  workspaceId String
+  userId      String
+  role        Role      @default(CREATOR)
+  joinedAt    DateTime  @default(now())
+
+  // Relations
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+}
+
+model Project {
+  id          String    @id @default(uuid())
+  workspaceId String
+  name        String
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  boards      Board[]
+  assets      Asset[]
+
+  @@index([workspaceId])
+}
+
+model Board {
+  id          String         @id @default(uuid())
+  projectId   String
+  name        String
+  canvasData  Json           // Stores canvas JSON data, coordinates, nodes, configurations
+  version     Int            @default(1)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  // Relations
+  project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  versions    BoardVersion[]
+  comments    Comment[]
+
+  @@index([projectId])
+}
+
+model BoardVersion {
+  id          String   @id @default(uuid())
+  boardId     String
+  canvasData  Json
+  version     Int
+  createdBy   String   // User ID or name of the editor
+  createdAt   DateTime @default(now())
+
+  // Relations
+  board       Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  @@index([boardId])
+}
+
+model Asset {
+  id          String    @id @default(uuid())
+  workspaceId String
+  projectId   String?
+  name        String
+  fileUrl     String
+  fileSize    Int
+  mimeType    String
+  type        AssetType
+  createdById String
+  createdAt   DateTime  @default(now())
+
+  // Relations
+  project     Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdBy   User      @relation(fields: [createdById], references: [id])
+
+  @@index([workspaceId])
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  boardId   String
+  userId    String
+  content   String
+  posX      Float?   // Pin coordinate on the canvas (x offset percentage or absolute pixel)
+  posY      Float?   // Pin coordinate on the canvas (y offset percentage or absolute pixel)
+  elementId String?  // ID of canvas DOM element or SVG node association
+  parentId  String?  // Hierarchical parent identifier for nested comment replies
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  board     Board     @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id])
+  parent    Comment?  @relation("CommentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Comment[] @relation("CommentThread")
+
+  @@index([boardId])
+}
+
+model Subscription {
+  id                   String             @id @default(uuid())
+  workspaceId          String             @unique
+  stripeSubscriptionId String             @unique
+  stripePriceId        String
+  status               SubscriptionStatus
+  trialStart           DateTime?
+  trialEnd             DateTime?
+  currentPeriodStart   DateTime
+  currentPeriodEnd     DateTime
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  // Relations
+  workspace            Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}

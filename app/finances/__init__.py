@@ -1,0 +1,1 @@
+# Finances module package initialization
