@@ -106,26 +106,7 @@ export function Timeline() {
     return saved ? JSON.parse(saved) : {};
   });
 
-  // Save custom org projects to localStorage whenever they change
-  useEffect(() => {
-    if (workspaceId) {
-      localStorage.setItem(`vantage_gantt_custom_org_projects_${workspaceId}`, JSON.stringify(customOrgProjects));
-    }
-  }, [customOrgProjects, workspaceId]);
 
-  // Save custom team projects to localStorage whenever they change
-  useEffect(() => {
-    if (workspaceId) {
-      localStorage.setItem(`vantage_gantt_custom_projects_${workspaceId}`, JSON.stringify(customProjects));
-    }
-  }, [customProjects, workspaceId]);
-
-  // Save syncToOrgMap to localStorage whenever they change
-  useEffect(() => {
-    if (workspaceId) {
-      localStorage.setItem(`vantage_gantt_sync_to_org_map_${workspaceId}`, JSON.stringify(syncToOrgMap));
-    }
-  }, [syncToOrgMap, workspaceId]);
 
   // Keep selectedTeam reset when workspaceId changes
   useEffect(() => {
