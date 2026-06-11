@@ -80,6 +80,63 @@ export function Timeline() {
     return Math.min(100, Math.max(0, Math.round(dayIndex * stepValue)));
   };
 
+  const getUnshiftedDay = (shiftedDay: number): number => {
+    if (!loadedShifts || loadedShifts.length === 0) return shiftedDay;
+    const sortedShifts = [...loadedShifts].map(s => s.targetDay).sort((a, b) => a - b);
+    let currentDay = shiftedDay;
+    for (let i = sortedShifts.length - 1; i >= 0; i--) {
+      const targetDay = sortedShifts[i];
+      if (currentDay >= targetDay) {
+        currentDay -= 1;
+      }
+    }
+    return currentDay;
+  };
+
+  const getShiftedCustomProjects = (projects: CustomProject[]): CustomProject[] => {
+    if (!loadedShifts || loadedShifts.length === 0) return projects;
+    const sortedShifts = [...loadedShifts].map(s => s.targetDay).sort((a, b) => a - b);
+    
+    return projects.map(project => {
+      let currentStart = project.start;
+      let currentDuration = project.duration;
+      
+      for (const targetDay of sortedShifts) {
+        const end = currentStart + currentDuration - 1;
+        if (currentStart >= targetDay) {
+          currentStart += 1;
+        } else if (currentStart < targetDay && end >= targetDay) {
+          currentDuration += 1;
+        }
+      }
+      
+      const shiftedSubTasks = (project.subTasks || []).map(sub => {
+        let subStart = sub.start;
+        let subDuration = sub.duration;
+        for (const targetDay of sortedShifts) {
+          const subEnd = subStart + subDuration - 1;
+          if (subStart >= targetDay) {
+            subStart += 1;
+          } else if (subStart < targetDay && subEnd >= targetDay) {
+            subDuration += 1;
+          }
+        }
+        return {
+          ...sub,
+          start: subStart,
+          duration: subDuration
+        };
+      });
+      
+      return {
+        ...project,
+        start: currentStart,
+        duration: currentDuration,
+        subTasks: shiftedSubTasks
+      };
+    });
+  };
+
   // Keep selectedTeam in the visible set if role changes
   useEffect(() => {
     if (!visibleTeams.includes(selectedTeam)) {
@@ -530,7 +587,8 @@ export function Timeline() {
       if (creationLevel === "org") {
         const stdParent = orgProjectsState.find(p => String(p.id) === data.dependsOnId);
         if (stdParent) {
-          precursorEndDay = stdParent.start + stdParent.duration - 1;
+          const shiftedEnd = stdParent.start + stdParent.duration - 1;
+          precursorEndDay = getUnshiftedDay(shiftedEnd);
           dependsOnName = stdParent.name;
         } else {
           const custParent = customOrgProjects.find(p => p.id === data.dependsOnId);
@@ -542,7 +600,8 @@ export function Timeline() {
       } else {
         const stdParent = currentTeamData.phases.find((p: any) => String(p.id) === data.dependsOnId);
         if (stdParent) {
-          precursorEndDay = stdParent.start + stdParent.duration - 1;
+          const shiftedEnd = stdParent.start + stdParent.duration - 1;
+          precursorEndDay = getUnshiftedDay(shiftedEnd);
           dependsOnName = stdParent.name;
         } else {
           const custParent = (customProjects[selectedTeam] || []).find(p => p.id === data.dependsOnId);
@@ -554,8 +613,10 @@ export function Timeline() {
       }
     }
 
-    const duration = Math.max(1, data.end - data.start);
-    const start = data.dependsOnId ? Math.max(data.start, precursorEndDay + 1) : data.start;
+    const unshiftedStart = getUnshiftedDay(data.start);
+    const unshiftedEnd = getUnshiftedDay(data.end);
+    const duration = Math.max(1, unshiftedEnd - unshiftedStart);
+    const start = data.dependsOnId ? Math.max(unshiftedStart, precursorEndDay + 1) : unshiftedStart;
 
     const newProject: CustomProject = {
       id: `cp-${Date.now()}`,
@@ -641,10 +702,11 @@ export function Timeline() {
   };
 
   const handleUpdateSubTask = (projectId: string, subTaskId: string, newStart: number) => {
+    const unshiftedStart = getUnshiftedDay(newStart);
     if (customOrgProjects.some(p => p.id === projectId)) {
       const nextOrg = customOrgProjects.map((p) =>
         p.id === projectId
-          ? { ...p, subTasks: p.subTasks.map((s) => (s.id === subTaskId ? { ...s, start: newStart } : s)) }
+          ? { ...p, subTasks: p.subTasks.map((s) => (s.id === subTaskId ? { ...s, start: unshiftedStart } : s)) }
           : p
       );
       setCustomOrgProjects(nextOrg);
@@ -656,7 +718,7 @@ export function Timeline() {
         if ((nextTeam[team] || []).some(p => p.id === projectId)) {
           nextTeam[team] = nextTeam[team].map((p) =>
             p.id === projectId
-              ? { ...p, subTasks: p.subTasks.map((s) => (s.id === subTaskId ? { ...s, start: newStart } : s)) }
+              ? { ...p, subTasks: p.subTasks.map((s) => (s.id === subTaskId ? { ...s, start: unshiftedStart } : s)) }
               : p
           );
         }
@@ -808,10 +870,10 @@ export function Timeline() {
           {viewMode === "Organization Master" ? (
             <OrganizationMasterView 
               orgProjects={orgProjectsState}
-              customOrgProjects={[
+              customOrgProjects={getShiftedCustomProjects([
                 ...customOrgProjects,
                 ...allTeams.filter(team => syncToOrgMap[team]).flatMap(team => customProjects[team] || [])
-              ]}
+              ])}
               onAddSubTask={handleAddSubTask}
               onUpdateSubTask={handleUpdateSubTask}
               canEdit={isAdmin}
@@ -833,7 +895,7 @@ export function Timeline() {
               teamName={selectedTeam}
               teamData={currentTeamData}
               onMilestoneClick={(milestone) => setSelectedMilestone(milestone)}
-              customProjects={customProjects[selectedTeam] || []}
+              customProjects={getShiftedCustomProjects(customProjects[selectedTeam] || [])}
               onAddSubTask={handleAddSubTask}
               onUpdateSubTask={handleUpdateSubTask}
               canEdit={canEditTeam}
