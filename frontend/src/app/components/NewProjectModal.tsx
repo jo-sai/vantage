@@ -41,7 +41,17 @@ export function NewProjectModal({ isOpen, onClose, onCreate, maxDay, existingPro
       setDependsOnId(existingProjects[0]?.id || "");
       setError("");
     }
-  }, [isOpen, existingProjects]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (isOpen && existingProjects.length > 0) {
+      const exists = existingProjects.some((p) => p.id === dependsOnId);
+      if (!exists) {
+        setDependsOnId(existingProjects[0].id);
+      }
+    }
+  }, [isOpen, existingProjects, dependsOnId]);
 
   const handleSubmit = () => {
     if (!name.trim()) {
